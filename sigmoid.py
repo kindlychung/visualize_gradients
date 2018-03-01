@@ -7,6 +7,38 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.autograd import Variable
 
+from scipy.misc import imsave
+from skimage.transform import resize
+import pickle
+import os
+
+def output_path(layer_name, ext):
+    output_base, _ = os.path.splitext(__file__)
+    return output_base + layer_name + ext
+
+def pickle_path():
+    output_base, _ = os.path.splitext(__file__)
+    return output_base +  ".pickle"
+
+grad_pickle_path = pickle_path()
+
+def plot(grad_dict):
+    for k, v in grad_dict.items():
+        img = np.vstack(v)
+        img = img / np.max(np.abs(img)) # make sure it's within [-1, 1]
+        h, w = img.shape
+        w *= 5
+        imsave(
+            output_path(k, ".png"),
+            resize(img, (h, w)),
+        )
+
+if os.path.exists(grad_pickle_path):
+    with open(grad_pickle_path, "rb") as fh:
+        grad_dict = pickle.load(fh)
+        plot(grad_dict)
+        os._exit(0)
+
 nrows = 9000
 ntrain = int(nrows * .7)
 X = torch.rand(nrows, 3)
@@ -47,6 +79,7 @@ class LinearWithID(nn.Linear):
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
+        self.n = 0
         self.hooked = False
         self.fc1 = LinearWithID("fc1", 3, 10)
         self.fc2 = LinearWithID("fc2", 10, 10)
@@ -64,7 +97,18 @@ class Net(nn.Module):
         self.fc7_hook_handle = self.fc7.register_backward_hook(self.backward_hook)
         self.log_every_n_step = 50
 
+    def fc_hook(self, layer_name, grad_output, log_every_n_step: int):
+        if self.n % self.log_every_n_step == 0:
+            if layer_name in grad_dict:
+                batch_mean = torch.abs(
+                    torch.mean(grad_output[0], 0)
+                ).cpu().numpy()
+                grad_dict[layer_name].append(batch_mean)
+            else:
+                grad_dict[layer_name] = []
+
     def forward(self, x):
+        self.n += 1
         x = self.fc1(x)
         x = F.sigmoid(x)
         x = self.fc2(x)
@@ -82,7 +126,7 @@ class Net(nn.Module):
 
     def backward_hook(self, module, grad_input,
                       grad_output):  # grad_input is input data of last op of the layer, ignored here
-        fc_hook(module.id, grad_output, self.log_every_n_step)
+        self.fc_hook(module.id, grad_output, self.log_every_n_step)
 
 
 net = Net().cuda()
@@ -139,20 +183,8 @@ accuracy = torch.mean(
 print("Accuracy of prediction on test dataset: %f" % accuracy.item())
 
 
-import os
-from scipy.misc import imsave
-
-def png_path(layer_name):
-    output_base, _ = os.path.splitext(__file__)
-    return output_base + layer_name + ".png"
 
 
-
-for k, v in grad_dict.items():
-    print(k)
-    img = np.vstack(v)
-    imsave(
-        png_path(k),
-        img,
-    )
+with open(grad_pickle_path, "wb") as fh:
+    pickle.dump(grad_dict, fh)
 
