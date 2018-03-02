@@ -32,6 +32,10 @@ Tested on Ubuntu 17.10, python 3.6:
 python main.py && python visualize.py && ./merge_images.sh && xdg-open all.png
 ```
 
+## How interpret the plot
+
+Three sections are annotationed by activation method. Each section has 7 lanes, standing for the gradients from the 7 neural net layers. In each lane, each row is the gradient value in one backprop step, from top to bottom, in order of time (top is earliest, bottom is latest). 
+
 ## Lessons learned in this specific case
 
 * Both `tanh` and `relu` converges better than `sigmoid`
