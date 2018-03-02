@@ -37,5 +37,6 @@ python main.py && python visualize.py && ./merge_images.sh && xdg-open all.png
 * Both `tanh` and `relu` converges better than `sigmoid`
 * Both `tanh` and `relu` results in more sparse gradients than `sigmoid`, `relu` is the most sparse
 * Both `tanh` and `relu` results in good accuracy, while `sigmoid` performs poorly
+* The `fc6` layer seems to have the vanishing gradient problem when `sigmoid` is used
 
 
