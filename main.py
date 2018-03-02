@@ -6,38 +6,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.autograd import Variable
-
-from scipy.misc import imsave
-from skimage.transform import resize
 import pickle
-import os
 
-def output_path(layer_name, ext):
-    output_base, _ = os.path.splitext(__file__)
-    return output_base + layer_name + ext
 
-def pickle_path():
-    output_base, _ = os.path.splitext(__file__)
-    return output_base +  ".pickle"
-
-grad_pickle_path = pickle_path()
-
-def plot(grad_dict):
-    for k, v in grad_dict.items():
-        img = np.vstack(v)
-        img = img / np.max(np.abs(img)) # make sure it's within [-1, 1]
-        h, w = img.shape
-        w *= 5
-        imsave(
-            output_path(k, ".png"),
-            resize(img, (h, w)),
-        )
-
-if os.path.exists(grad_pickle_path):
-    with open(grad_pickle_path, "rb") as fh:
-        grad_dict = pickle.load(fh)
-        plot(grad_dict)
-        os._exit(0)
 
 nrows = 9000
 ntrain = int(nrows * .7)
@@ -77,10 +48,9 @@ class LinearWithID(nn.Linear):
 
 
 class Net(nn.Module):
-    def __init__(self):
+    def __init__(self, activation_method: str):
         super(Net, self).__init__()
         self.n = 0
-        self.hooked = False
         self.fc1 = LinearWithID("fc1", 3, 10)
         self.fc2 = LinearWithID("fc2", 10, 10)
         self.fc3 = LinearWithID("fc3", 10, 10)
@@ -96,6 +66,7 @@ class Net(nn.Module):
         self.fc6_hook_handle = self.fc6.register_backward_hook(self.backward_hook)
         self.fc7_hook_handle = self.fc7.register_backward_hook(self.backward_hook)
         self.log_every_n_step = 50
+        self.activate = getattr(F, activation_method)
 
     def fc_hook(self, layer_name, grad_output, log_every_n_step: int):
         if self.n % self.log_every_n_step == 0:
@@ -110,17 +81,17 @@ class Net(nn.Module):
     def forward(self, x):
         self.n += 1
         x = self.fc1(x)
-        x = F.relu(x)
+        x = self.activate(x)
         x = self.fc2(x)
-        x = F.relu(x)
+        x = self.activate(x)
         x = self.fc3(x)
-        x = F.relu(x)
+        x = self.activate(x)
         x = self.fc4(x)
-        x = F.relu(x)
+        x = self.activate(x)
         x = self.fc5(x)
-        x = F.relu(x)
+        x = self.activate(x)
         x = self.fc6(x)
-        x = F.relu(x)
+        x = self.activate(x)
         x = self.fc7(x)
         return x
 
@@ -129,62 +100,46 @@ class Net(nn.Module):
         self.fc_hook(module.id, grad_output, self.log_every_n_step)
 
 
-net = Net().cuda()
-print(net)
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(net.parameters(), lr=0.01, momentum=.8)
-NUM_EPOCH = 2
-NUM_PER_BATCH = 4
+def run(activation_method: str):
+    net = Net(activation_method).cuda()
+    print(net)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.SGD(net.parameters(), lr=0.01, momentum=.8)
+    NUM_EPOCH = 6
+    NUM_PER_BATCH = 4
+    index_pool = np.arange(Xtr.size(0))
+    for epoch in range(NUM_EPOCH):  # loop over the dataset multiple times
+        running_loss = 0.0
+        for i in index_pool:
+            indices = np.random.choice(
+                index_pool, size=NUM_PER_BATCH, replace=False)
+            inputs = Xtr[indices, :].cuda()
+            labels = Ytr[torch.from_numpy(indices)].cuda()
+            inputs, labels = Variable(inputs), Variable(labels)
+            outputs = net(inputs)
+            optimizer.zero_grad()
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.data.item()
+            if i % 2000 == 1999:  # print every 2000 mini-batches
+                print('[%d, %5d] loss: %.3f' %
+                      (epoch + 1, i + 1, running_loss / 2000))
+                running_loss = 0.0
 
-# # one pass backprop
-# index_pool = np.arange(Xtr.size(0))
-# indices = np.random.choice(index_pool, size=NUM_PER_BATCH, replace=False)
-# inputs = Xtr[indices, :].cuda()
-# labels = Ytr[torch.from_numpy(indices)].cuda()
-# inputs, labels = Variable(inputs), Variable(labels)
-# outputs = net(inputs)
-# optimizer.zero_grad()
-# loss = criterion(outputs, labels)
-# loss.backward()
-# optimizer.step()
-# running_loss += loss.data.item()
+    accuracy = torch.mean(
+        torch.eq(
+            torch.max(
+                net(Variable(Xte.cuda())),
+                dim=1
+            )[1].cpu(),
+            Yte
+        ).type(torch.FloatTensor)
+    )
+    print("Accuracy of prediction on test dataset: %f" % accuracy.item())
+    with open(activation_method + '.pickle', "wb") as fh:
+        pickle.dump(grad_dict, fh)
 
-NUM_EPOCH = 6
-NUM_PER_BATCH = 4
-index_pool = np.arange(Xtr.size(0))
-for epoch in range(NUM_EPOCH):  # loop over the dataset multiple times
-    running_loss = 0.0
-    for i in index_pool:
-        indices = np.random.choice(
-            index_pool, size=NUM_PER_BATCH, replace=False)
-        inputs = Xtr[indices, :].cuda()
-        labels = Ytr[torch.from_numpy(indices)].cuda()
-        inputs, labels = Variable(inputs), Variable(labels)
-        outputs = net(inputs)
-        optimizer.zero_grad()
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
-        running_loss += loss.data.item()
-        if i % 2000 == 1999:  # print every 2000 mini-batches
-            print('[%d, %5d] loss: %.3f' %
-                  (epoch + 1, i + 1, running_loss / 2000))
-            running_loss = 0.0
-
-accuracy = torch.mean(
-    torch.eq(
-        torch.max(
-            net(Variable(Xte.cuda())),
-            dim=1
-        )[1].cpu(),
-        Yte
-    ).type(torch.FloatTensor)
-)
-print("Accuracy of prediction on test dataset: %f" % accuracy.item())
-
-
-
-
-with open(grad_pickle_path, "wb") as fh:
-    pickle.dump(grad_dict, fh)
-
+for m in ["sigmoid", "tanh", "relu"]:
+    grad_dict = {}
+    run(m)
