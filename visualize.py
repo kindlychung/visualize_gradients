@@ -16,5 +16,5 @@ def plot(activation_method):
         )
 
 for m in ["sigmoid", "tanh", "relu"]:
-    plot(m
+    plot(m)
 
